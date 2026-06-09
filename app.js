@@ -3,10 +3,10 @@
 
   const TOTAL_SECONDS = 90;
   const milestones = [
-    { at: 20, germ: 1, stage: 'clean-1', text: 'すこしキレイ！' },
-    { at: 50, germ: 2, stage: 'clean-2', text: 'キレイになってるよ！' },
-    { at: 70, germ: 3, stage: 'clean-3', text: 'バイキンいなくなった！' },
-    { at: 90, germ: null, stage: 'reward', text: 'ピカピカできた！' }
+    { at: 20, germ: 1, stage: 'clean-1', text: 'すこしキレイ！', sparkleCount: 10, sound: 'small' },
+    { at: 50, germ: 2, stage: 'clean-2', text: 'キレイになってるよ！', sparkleCount: 13, sound: 'middle' },
+    { at: 70, germ: 3, stage: 'clean-3', text: 'バイキンいなくなった！', sparkleCount: 18, sound: 'clear' },
+    { at: 90, germ: null, stage: 'reward', text: 'ピカピカできた！', sparkleCount: 42, sound: 'reward' }
   ];
 
   const stage = document.getElementById('stage');
@@ -25,6 +25,7 @@
   let sparkleTimer = null;
   let startAt = 0;
   let completed = false;
+  let audioCtx = null;
   const reached = new Set();
 
   function buildTeeth() {
@@ -53,19 +54,25 @@
     bubbleLayer.innerHTML = '';
     sparkleLayer.innerHTML = '';
     document.querySelectorAll('.germ').forEach((germ) => germ.classList.remove('gone'));
+    document.querySelectorAll('.tooth').forEach((tooth) => tooth.classList.remove('polished'));
     timer.textContent = String(TOTAL_SECONDS);
     progressBar.style.width = '0%';
     message.textContent = 'リンゴをおしてね';
-    message.classList.remove('hidden');
+    message.classList.remove('hidden', 'pop');
     startButton.classList.remove('hidden');
+    startButton.classList.add('ready');
+    startButton.setAttribute('aria-label', 'スタート');
   }
 
   function startGame() {
+    initAudio();
     resetGame();
     startAt = performance.now();
     stage.classList.add('running');
     startButton.classList.add('hidden');
-    message.textContent = 'シャカシャカみがこう！';
+    startButton.classList.remove('ready');
+    showMessage('シャカシャカみがこう！');
+    playTone('start');
     beginParticles();
     rafId = requestAnimationFrame(tick);
   }
@@ -91,18 +98,23 @@
   }
 
   function applyMilestone(item) {
-    stage.classList.add(item.stage);
-    message.textContent = item.text;
+    stage.classList.add(item.stage, 'pause-brush');
+    setTimeout(() => stage.classList.remove('pause-brush'), 720);
+    showMessage(item.text);
+    playTone(item.sound);
+    addCleanRipple(item.sound === 'reward');
+    polishSomeTeeth(item.at);
+
     setTimeout(() => {
-      if (!completed && item.at < 90) message.textContent = 'シャカシャカみがこう！';
+      if (!completed && item.at < 90) showMessage('シャカシャカみがこう！');
     }, 2200);
 
     if (item.germ) {
       const germ = document.querySelector(`[data-germ="${item.germ}"]`);
-      sparkleBurstAround(germ, item.germ === 3 ? 14 : 9);
-      germ.classList.add('gone');
+      sparkleBurstAround(germ, item.sparkleCount);
+      if (germ) germ.classList.add('gone');
     } else {
-      rewardSparkles(34);
+      rewardSparkles(item.sparkleCount);
     }
   }
 
@@ -112,45 +124,56 @@
     clearInterval(sparkleTimer);
     stage.classList.remove('running');
     stage.classList.add('reward');
-    message.textContent = 'ピカピカできた！';
+    showMessage('ピカピカできた！');
     timer.textContent = '0';
     progressBar.style.width = '100%';
-    rewardSparkles(42);
+    addCleanRipple(true);
+    rewardSparkles(48);
     setTimeout(() => {
       startButton.classList.remove('hidden');
+      startButton.classList.add('ready');
       startButton.setAttribute('aria-label', 'もう一回');
-      message.textContent = 'もういっかい？';
+      showMessage('もういっかい？');
     }, 1200);
+  }
+
+  function showMessage(text) {
+    message.textContent = text;
+    message.classList.remove('pop');
+    // restart CSS animation safely
+    void message.offsetWidth;
+    message.classList.add('pop');
   }
 
   function beginParticles() {
     bubbleTimer = setInterval(() => {
       const elapsed = (performance.now() - startAt) / 1000;
       const count = elapsed > 70 ? 3 : elapsed > 50 ? 2 : 1;
-      for (let i = 0; i < count; i += 1) createBubbleNearBrush();
+      for (let i = 0; i < count; i += 1) createBubbleNearBrush(elapsed);
     }, 420);
 
     sparkleTimer = setInterval(() => {
       const elapsed = (performance.now() - startAt) / 1000;
-      const chance = elapsed > 70 ? 0.7 : elapsed > 50 ? 0.45 : 0.22;
+      const chance = elapsed > 70 ? 0.66 : elapsed > 50 ? 0.42 : 0.17;
       if (Math.random() < chance) createSparkle(elapsed > 70);
-    }, 760);
+    }, 820);
   }
 
-  function createBubbleNearBrush() {
+  function createBubbleNearBrush(elapsed) {
     const stageBox = stage.getBoundingClientRect();
     const brushBox = brush.getBoundingClientRect();
     const x = brushBox.left - stageBox.left + brushBox.width * (0.72 + Math.random() * 0.22);
     const y = brushBox.top - stageBox.top + brushBox.height * (0.28 + Math.random() * 0.45);
     const bubble = document.createElement('span');
     bubble.className = 'bubble';
-    const size = 8 + Math.random() * 12;
+    const maxSize = elapsed > 70 ? 13 : 11;
+    const size = 7 + Math.random() * maxSize;
     bubble.style.width = `${size}px`;
     bubble.style.height = `${size}px`;
     bubble.style.left = `${x}px`;
     bubble.style.top = `${y}px`;
-    bubble.style.setProperty('--dx', `${-18 + Math.random() * 36}px`);
-    bubble.style.setProperty('--dy', `${-30 - Math.random() * 32}px`);
+    bubble.style.setProperty('--dx', `${-14 + Math.random() * 28}px`);
+    bubble.style.setProperty('--dy', `${-24 - Math.random() * 24}px`);
     bubbleLayer.appendChild(bubble);
     bubble.addEventListener('animationend', () => bubble.remove(), { once: true });
   }
@@ -158,8 +181,8 @@
   function createSparkle(isReward = false) {
     const sparkle = document.createElement('span');
     sparkle.className = `sparkle${isReward ? ' reward-spark' : ''}`;
-    const x = 18 + Math.random() * 64;
-    const y = 20 + Math.random() * 58;
+    const x = isReward ? 16 + Math.random() * 68 : 24 + Math.random() * 52;
+    const y = isReward ? 18 + Math.random() * 62 : 24 + Math.random() * 48;
     sparkle.style.left = `${x}%`;
     sparkle.style.top = `${y}%`;
     sparkleLayer.appendChild(sparkle);
@@ -176,18 +199,80 @@
       setTimeout(() => {
         const sparkle = document.createElement('span');
         sparkle.className = 'sparkle';
-        sparkle.style.left = `${centerX - 14 + Math.random() * 28}px`;
-        sparkle.style.top = `${centerY - 14 + Math.random() * 28}px`;
+        sparkle.style.left = `${centerX - 18 + Math.random() * 36}px`;
+        sparkle.style.top = `${centerY - 18 + Math.random() * 36}px`;
         sparkleLayer.appendChild(sparkle);
         sparkle.addEventListener('animationend', () => sparkle.remove(), { once: true });
-      }, i * 55);
+      }, i * 45);
     }
   }
 
   function rewardSparkles(count) {
     for (let i = 0; i < count; i += 1) {
-      setTimeout(() => createSparkle(true), i * 42);
+      setTimeout(() => createSparkle(true), i * 36);
     }
+  }
+
+  function addCleanRipple(isReward) {
+    const ripple = document.createElement('span');
+    ripple.className = `clean-ripple${isReward ? ' reward-ring' : ''}`;
+    sparkleLayer.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+  }
+
+  function polishSomeTeeth(at) {
+    const teeth = Array.from(document.querySelectorAll('.tooth'));
+    let indexes;
+    if (at === 20) indexes = [2, 3, 10, 11];
+    else if (at === 50) indexes = [1, 4, 5, 9, 12, 13];
+    else indexes = teeth.map((_, i) => i);
+    indexes.forEach((index, order) => {
+      const tooth = teeth[index];
+      if (!tooth) return;
+      setTimeout(() => {
+        tooth.classList.remove('polished');
+        void tooth.offsetWidth;
+        tooth.classList.add('polished');
+      }, order * 45);
+    });
+  }
+
+  function initAudio() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (_) {
+      audioCtx = null;
+    }
+  }
+
+  function playTone(type) {
+    if (!audioCtx) return;
+    const presets = {
+      start: [523, 660],
+      small: [660, 880],
+      middle: [660, 784, 988],
+      clear: [784, 988, 1175],
+      reward: [660, 880, 1047, 1319]
+    };
+    const notes = presets[type] || presets.small;
+    const now = audioCtx.currentTime;
+    notes.forEach((freq, i) => {
+      const t = now + i * 0.075;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(type === 'reward' ? 0.11 : 0.075, t + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    });
   }
 
   buildTeeth();
